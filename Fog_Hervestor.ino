@@ -1,6 +1,7 @@
 #include <Servo.h>
+#include <DHT.h>
 
-// --- Servo Setup ---
+// ---------------- SERVO SETUP ----------------
 Servo horizontal;
 Servo vertical;
 
@@ -12,28 +13,32 @@ int servovert = 45;
 int servovertLimitHigh = 100;
 int servovertLimitLow = 1;
 
-// --- LDR Setup ---
-int ldrlt = A0;  // Top Left
-int ldrrt = A3;  // Top Right
-int ldrld = A1;  // Bottom Left
-int ldrrd = A2;  // Bottom Right
+// ---------------- LDR SETUP ----------------
+int ldrlt = A0;   // Top Left
+int ldrld = A1;   // Bottom Left
+int ldrrd = A2;   // Bottom Right
+int ldrrt = A3;   // Top Right
 
-// --- Humidity Sensor ---
-int humidityPin = A4;  // Analog input
-int humidityThreshold = 600;  // Adjust experimentally (0-1023)
+// ---------------- DHT11 SETUP ----------------
+#define DHTPIN 4
+#define DHTTYPE DHT11
+DHT dht(DHTPIN, DHTTYPE);
 
-// --- MOSFET Control ---
-int mosfetPin = 8;  
+int humidityThreshold = 69;   // %RH
 
-// --- Day/Night Detection ---
-int lightThreshold = 200; // Adjust experimentally
+// ---------------- MOSFET / HVG ----------------
+int mosfetPin = 8;
 
-// --- HVG Timing Control ---
-unsigned long onDuration = 300000UL;   // 5 minutes (ms)
-unsigned long offDuration = 60000UL;   // 1 minute (ms)
+// ---------------- DAY / NIGHT ----------------
+int lightThreshold = 200;
+
+// ---------------- HVG TIMING ----------------
+unsigned long onDuration  = 300000UL;   // 5 min ON
+unsigned long offDuration = 60000UL;    // 1 min OFF
 unsigned long lastSwitchTime = 0;
-bool hvgState = false;
+bool hvgState = false;   // false = OFF, true = ON
 
+// ---------------- SETUP ----------------
 void setup() {
   Serial.begin(9600);
 
@@ -43,17 +48,22 @@ void setup() {
   vertical.write(servovert);
 
   pinMode(mosfetPin, OUTPUT);
-  digitalWrite(mosfetPin, LOW);  // HVG OFF initially
+  digitalWrite(mosfetPin, LOW);
 
+  dht.begin();
   delay(2000);
+
+  Serial.println("System Initialized");
 }
 
+// ---------------- LOOP ----------------
 void loop() {
-  // --- Read LDR values ---
+
+  // -------- READ LDRs --------
   int lt = analogRead(ldrlt);
-  int rt = analogRead(ldrrt);
   int ld = analogRead(ldrld);
   int rd = analogRead(ldrrd);
+  int rt = analogRead(ldrrt);
 
   int avt = (lt + rt) / 2;
   int avd = (ld + rd) / 2;
@@ -64,70 +74,67 @@ void loop() {
   int dhoriz = avl - avr;
 
   int tol = 90;
-  int dtime = 10;
-
   int totalLight = (lt + rt + ld + rd) / 4;
 
+  // ================= DAY MODE =================
   if (totalLight > lightThreshold) {
-    // ---------- DAY MODE ----------
-    digitalWrite(mosfetPin, LOW);  // HVG OFF during daytime
-    hvgState = false;              // reset state machine
 
-    // Sun Tracking
+    digitalWrite(mosfetPin, LOW);
+    hvgState = false;
+
+    // Vertical tracking
     if (abs(dvert) > tol) {
-      if (avt > avd) {
-        servovert++;
-        if (servovert > servovertLimitHigh) servovert = servovertLimitHigh;
-      } else {
-        servovert--;
-        if (servovert < servovertLimitLow) servovert = servovertLimitLow;
-      }
+      servovert += (dvert > 0) ? 1 : -1;
+      servovert = constrain(servovert, servovertLimitLow, servovertLimitHigh);
       vertical.write(servovert);
     }
 
+    // Horizontal tracking
     if (abs(dhoriz) > tol) {
-      if (avl > avr) {
-        servohori--;
-        if (servohori < servohoriLimitLow) servohori = servohoriLimitLow;
-      } else {
-        servohori++;
-        if (servohori > servohoriLimitHigh) servohori = servohoriLimitHigh;
-      }
+      servohori += (dhoriz < 0) ? 1 : -1;
+      servohori = constrain(servohori, servohoriLimitLow, servohoriLimitHigh);
       horizontal.write(servohori);
     }
-  } 
+  }
+
+  // ================= NIGHT MODE =================
   else {
-    // ---------- NIGHT MODE ----------
-    int humidityValue = analogRead(humidityPin);
+
+    float humidity = dht.readHumidity();
+
+    if (isnan(humidity)) {
+      Serial.println("DHT11 ERROR");
+      digitalWrite(mosfetPin, LOW);
+      return;
+    }
+
     Serial.print("Humidity: ");
-    Serial.println(humidityValue);
+    Serial.print(humidity);
+    Serial.println(" %");
 
-    if (humidityValue > humidityThreshold) {
-      unsigned long currentMillis = millis();
+    unsigned long now = millis();
 
-      if (hvgState) { 
-        // HVG currently ON
-        if (currentMillis - lastSwitchTime >= onDuration) {
-          hvgState = false;
-          digitalWrite(mosfetPin, LOW); 
-          lastSwitchTime = currentMillis;
-          Serial.println("HVG OFF (cooling)");
-        }
-      } else {
-        // HVG currently OFF
-        if (currentMillis - lastSwitchTime >= offDuration) {
-          hvgState = true;
-          digitalWrite(mosfetPin, HIGH);
-          lastSwitchTime = currentMillis;
-          Serial.println("HVG ON (fog collection)");
-        }
+    if (humidity >= humidityThreshold) {
+
+      if (!hvgState && (now - lastSwitchTime >= offDuration)) {
+        hvgState = true;
+        digitalWrite(mosfetPin, HIGH);
+        lastSwitchTime = now;
+        Serial.println("HVG ON");
       }
-    } 
+
+      if (hvgState && (now - lastSwitchTime >= onDuration)) {
+        hvgState = false;
+        digitalWrite(mosfetPin, LOW);
+        lastSwitchTime = now;
+        Serial.println("HVG OFF (cooling)");
+      }
+    }
     else {
-      digitalWrite(mosfetPin, LOW); // Low humidity → HVG stays OFF
+      digitalWrite(mosfetPin, LOW);
       hvgState = false;
     }
   }
 
-  delay(dtime);
+  delay(10);
 }
