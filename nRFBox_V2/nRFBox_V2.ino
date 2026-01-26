@@ -99,9 +99,9 @@ int current_screen = 0;
 void about() {
   u8g2.clearBuffer();
   u8g2.setFont(u8g2_font_6x10_tf);
-  u8g2.drawStr(0, 15, "Youtube/Experiments&Projects");
-  u8g2.drawStr(21, 35, "Experiments & Projects");
-  u8g2.drawStr(0, 55, "electricalandelectronics64@gmail.com");
+  u8g2.drawStr(0, 15, "ESP32 Signal Catcher");
+  u8g2.drawStr(21, 35, "Debargho Dutta");
+  u8g2.drawStr(0, 55, "dearghodutta777@gmail.com");
   u8g2.sendBuffer();
 }
 
@@ -501,3 +501,4 @@ if (current_screen == 0 && item_selected == 0) {
   u8g2.sendBuffer(); 
 
 }
+
